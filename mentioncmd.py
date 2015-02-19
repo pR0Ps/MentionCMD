@@ -33,7 +33,7 @@ class mentioncmd(znc.Module):
     def on_away(fcn):
         """Wrapper to disable functionality if the user is connected"""
         def wrapper(self, *args, **kwargs):
-            if DEBUG or not self.GetNetwork().IsUserAttached():
+            if self.DEBUG or not self.GetNetwork().IsUserAttached():
                 return fcn(self, *args, **kwargs)
             else:
                 return znc.CONTINUE
