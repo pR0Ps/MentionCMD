@@ -12,7 +12,7 @@ class mentioncmd(znc.Module):
 
     OPTS = {
         "cmd": ("The command to execute. The network name, channel name, nick and message will be passed as params (in that order)", ""),
-        #"nick_blacklist": ("Nicks to ignore when they mention/PM you", ""),
+        "nick_blacklist": ("Nicks to ignore when they mention/PM you", ""),
         "highlights": ("Extra words/names to be notified about", ""),
         "pm_reply": ("If set, this message will be sent as a reply to users who PM you", "[znc] User is not currently connected but has been notified.")
     }
@@ -70,9 +70,14 @@ class mentioncmd(znc.Module):
         hl = self.nv["highlights"]
         self.matches = [re.compile(self.HL_REGEX.format(x), re.IGNORECASE) for x in hl.split(" ")] if hl else []
 
+        self.blacklist = set(self.nv["nick_blacklist"].split(" "))
+        self.blacklist.discard("")
+
     def OnLoad(self, args, message):
-        """Initialize the config and network->username map when the module loads"""
+        """Initialize the config when the module loads"""
         self.reload_config()
+
+        # Network -> username mapping for the user
         self.usermap = {}
         return True
 
@@ -85,11 +90,18 @@ class mentioncmd(znc.Module):
     def OnChanMsg(self, nick, channel, message):
         """Regular channel message, check for a username or highlight match"""
         message = message.s
-        name_re = self.usermap.get(self.GetNetwork().GetName(), None)
+        nick = nick.GetNick()
+        channel = channel.GetName()
 
-        if any(filter(lambda x: x.search(message), self.matches + ([name_re] if name_re else []))):
-            self.send_notification(channel.GetName(), nick.GetNick(), message)
-            self.PutDebug("Message matched. msg '{}' on '{}' from '{}'".format(message, channel.GetName(), nick.GetNick()))
+        if nick in self.blacklist:
+            self.PutDebug("Ignored msg from '{}' on '{}': {}".format(nick, channel, message))
+            return znc.CONTINUE
+
+        name_re = self.usermap.get(self.GetNetwork().GetName(), None)
+        to_check = self.matches + ([name_re] if name_re else [])
+        if any(filter(lambda x: x.search(message), to_check)):
+            self.send_notification(channel, nick, message)
+            self.PutDebug("Message matched. msg '{}' on '{}' from '{}'".format(message, channel, nick))
         return znc.CONTINUE
 
     @on_away
@@ -109,6 +121,10 @@ class mentioncmd(znc.Module):
         """
         message = message.s
         nick = nick.GetNick()
+        if nick in self.blacklist:
+            self.PutDebug("Ignoring private message from {}: {}".format(nick, message))
+            return znc.CONTINUE
+
         if self.send_notification(None, nick, message) and self.nv["pm_reply"]:
             self.PutIRC("PRIVMSG {} :{}".format(nick, self.nv["pm_reply"]))
         self.PutDebug("Private message received from {}: {}".format(nick, message))
