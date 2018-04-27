@@ -2,6 +2,18 @@ import znc
 import re
 import subprocess
 
+
+class pmcooldowntimer(znc.Timer):
+    """Timer to remove a nick from a set after a certain interval
+
+    Requires the following properties set on it after instantiation:
+     - pm_cooldown: the set to remove user from
+     - target: the target users nick
+    """
+    def RunJob(self):
+        self.pm_cooldown.discard(self.target)
+
+
 class mentioncmd(znc.Module):
     description = "Run a command when you are mentioned or PM'd on IRC"
     module_types = [znc.CModInfo.UserModule, znc.CModInfo.NetworkModule]
@@ -73,12 +85,22 @@ class mentioncmd(znc.Module):
         self.blacklist = set(self.nv["nick_blacklist"].split(" "))
         self.blacklist.discard("")
 
+    def start_pm_cooldown(self, nick):
+        """Stop sending PM replies to a user for an hour"""
+        self.pm_cooldown.add(nick)
+        timer = self.CreateTimer(pmcooldowntimer, interval=60*60, cycles=1)
+        timer.pm_cooldown = self.pm_cooldown
+        timer.target = nick
+
     def OnLoad(self, args, message):
         """Initialize the config when the module loads"""
         self.reload_config()
 
         # Network -> username mapping for the user
         self.usermap = {}
+
+        # Keep track of the users we've recently PM'd
+        self.pm_cooldown = set()
         return True
 
     def OnClientDisconnect(self):
@@ -126,7 +148,11 @@ class mentioncmd(znc.Module):
             return znc.CONTINUE
 
         if self.send_notification(None, nick, message) and self.nv["pm_reply"]:
-            self.PutIRC("PRIVMSG {} :{}".format(nick, self.nv["pm_reply"]))
+            if nick not in self.pm_cooldown:
+                self.PutIRC("PRIVMSG {} :{}".format(nick, self.nv["pm_reply"]))
+                self.start_pm_cooldown(nick)
+            else:
+                self.PutDebug("Not sending another PM to '{}' (still on cooldown)".format(nick))
         self.PutDebug("Private message received from {}: {}".format(nick, message))
         return znc.CONTINUE
 
